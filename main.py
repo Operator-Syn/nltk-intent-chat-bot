@@ -8,21 +8,24 @@ def main():
 
     print("Chatbot ready. Type 'quit' to exit.")
 
-    while True:
+    try:
+        while True:
+            text = input("> ")
 
-        text = input("> ")
+            if text.lower() == "quit":
+                break
 
-        if text == "quit":
-            break
+            tokens = tokenize(text)
+            clean = preprocess(tokens)
 
-        tokens = tokenize(text)
-        clean = preprocess(tokens)
+            intent = classify(clean)
 
-        intent = classify(clean)
+            reply = generate(intent)
 
-        reply = generate(intent)
+            print(reply)
 
-        print(reply)
+    except KeyboardInterrupt:
+        print("\nExiting chatbot. Goodbye!")
 
 
 if __name__ == "__main__":
