@@ -14,7 +14,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 logging.getLogger("transformers").setLevel(logging.ERROR)
 
 class ChatEngine:
-    def __init__(self, intents_data, slang_data=None):
+    def __init__(self, intents_data, slang_data=None, markers_data=None, guards_data=None):
         # Authenticate with Hugging Face if token is available
         hf_token = os.getenv("HF_TOKEN")
         if hf_token:
@@ -23,6 +23,12 @@ class ChatEngine:
         self.lemmatizer = WordNetLemmatizer()
         self.spell = SpellChecker()
         self.slang_map = slang_data or {}
+        # Load protected Tagalog markers from markers.jsonc
+        self.tl_markers = set(markers_data.get("tl_markers", [])) if markers_data else set()
+        
+        # Load English overrides from guards.jsonc
+        self.en_overrides = set(guards_data.get("en_overrides", [])) if guards_data else set()
+
         self.user_lang = "en"
         self.last_conf = 0.0
 
@@ -30,7 +36,6 @@ class ChatEngine:
         langid.set_languages(['en', 'tl'])
 
         # Pre-load MarianMT translation models at startup
-        # Models are downloaded once and cached locally (~300MB each)
         self._translators = {}
         for pair in [("tl", "en"), ("en", "tl")]:
             model_name = f"Helsinki-NLP/opus-mt-{pair[0]}-{pair[1]}"
@@ -40,8 +45,6 @@ class ChatEngine:
             }
 
         # Dual-layer vectorizers
-        # char_wb (2-5) captures sub-word patterns for typos
-        # word (1-2) captures exact phrase logic and bigrams
         self.char_vectorizer = TfidfVectorizer(analyzer='char_wb', ngram_range=(2, 5))
         self.word_vectorizer = TfidfVectorizer(analyzer='word', ngram_range=(1, 2))
 
@@ -71,48 +74,58 @@ class ChatEngine:
         return tokenizer.decode(translated[0], skip_special_tokens=True)
 
     def _preprocess(self, text, autocorrect=True, translate=True):
-        # --- LAYER 0: OFFLINE DETECTION & TRANSLATION ---
-        is_english = True
-        if translate:
-            lang, conf = langid.classify(text)
-            self.user_lang = lang
-            self.last_conf = conf
-
-            if lang != 'en':
-                is_english = False
-                try:
-                    translated = self._get_translation(text, lang, "en")
-                    if translated and translated.strip() and translated.lower() != text.lower():
-                        text = translated
-                        is_english = True
-                except Exception as e:
-                    # Keep original text if translation fails
-                    print(f"[Translation Error] {e}")
-
-        # --- LAYER 1: NOISE CLEANING ---
-        # Strip ANSI escape codes (machine noise)
+        # --- LAYER 0: NOISE CLEANING ---
         text = re.sub(r'\x1b\[[0-9;]*[a-zA-Z~]', '', text)
-        # Strip literal terminal artifacts (like ^[[A)
         text = re.sub(r'\^\[+\[[A-Z0-9~]*', '', text)
-
-        text = text.lower()
-        # Remove non-alphanumeric junk but preserve spaces
+        text = text.lower().strip()
         text = re.sub(r"[^a-z0-9\s]", "", text)
 
-        # --- LAYER 2: NORMALIZATION ---
-        # Collapse repeated characters (e.g., "heeeeeey" -> "heey")
-        text = re.sub(r'(.)\1{2,}', r'\1\1', text)
+        # --- LAYER 0.5: ENGLISH GUARD OVERRIDE ---
+        # If the phrase is in our guards list, we force English and skip translation logic
+        if translate and text in self.en_overrides:
+            self.user_lang = "en"
+            translate = False
 
+        # --- LAYER 1: OFFLINE DETECTION & TRANSLATION ---
+        is_native_english = True
+        if translate:
+            lang, conf = langid.classify(text)
+            
+            # Check if any word in the input is a protected Tagalog marker
+            has_tl_markers = any(w in self.tl_markers for w in text.split())
+
+            # Trigger translation if detected as TL, has markers, or is low-confidence English
+            if lang == 'tl' or has_tl_markers or (lang == 'en' and conf < 2.0):
+                self.user_lang = "tl"
+                is_native_english = False
+                try:
+                    translated = self._get_translation(text, "tl", "en")
+                    if translated and translated.strip().lower() != text.lower():
+                        text = translated
+                except Exception as e:
+                    print(f"[Translation Error] {e}")
+            else:
+                self.user_lang = "en"
+            
+            self.last_conf = conf
+
+        # --- LAYER 2: NORMALIZATION ---
+        text = re.sub(r'(.)\1{2,}', r'\1\1', text)
         words = text.split()
 
         # --- LAYER 3: SLANG MAPPING (Priority) ---
-        # Check your custom slang.jsonc first!
         current_words = [self.slang_map.get(w, w) for w in words]
 
-        # --- LAYER 4: AUTO-CORRECT (Fallback) ---
-        # Only spellcheck if we are certain the text is English to avoid mangling Tagalog/Bisaya
-        if autocorrect and is_english:
-            current_words = [self.spell.correction(w) or w for w in current_words]
+        # --- LAYER 4: AUTO-CORRECT (Conditional Fallback) ---
+        # Only spellcheck if native English and the word isn't a protected marker
+        if autocorrect and is_native_english:
+            final_words = []
+            for w in current_words:
+                if len(w) <= 3 or w in self.tl_markers:
+                    final_words.append(w)
+                else:
+                    final_words.append(self.spell.correction(w) or w)
+            current_words = final_words
 
         # --- LAYER 5: LEMMATIZATION ---
         return " ".join([self.lemmatizer.lemmatize(w) for w in current_words]).strip()
@@ -122,7 +135,7 @@ class ChatEngine:
         if self.user_lang == "en":
             return response_text
         try:
-            return self._get_translation(response_text, "en", self.user_lang) or response_text
+            return self._get_translation(response_text, "en", "tl") or response_text
         except Exception as e:
             print(f"[Translation Error] {e}")
             return response_text
