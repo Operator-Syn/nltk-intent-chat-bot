@@ -4,7 +4,20 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
+scikit-learn = "*"
 nltk = "*"
+fastapi = "*"
+uvicorn = "*"
+joblib = "*"
+requests = "*"
+python-dotenv = "*"
+json5 = "*"
+thefuzz = "*"
+pyspellchecker = "*"
+argostranslate = "*"
+langid = "*"
+transformers = "*"
+sentencepiece = "*"
 
 [dev-packages]
 
