@@ -1,7 +1,5 @@
-// intents.jsonc
 {
   "intents": [
-    // --- ASSISTANT PERSONALITY ---
     {
       "tag": "bot_identity",
       "patterns": [
@@ -10,15 +8,17 @@
         "What is your name",
         "Tell me about yourself",
         "Are you a human",
-        "You are",
-        "Who am I talking to"
+        "Who am I talking to",
+        "who are you",         // Matches translation of 'sino ka'
+        "what your name is",   // Matches translation of 'ano ang iyong pangalan'
+        "who you",             // Matches direct input
+        "who is yours"         // FIX: Moved here because 'who you' translates to this
       ],
       "responses": [
         "I am John-Ronan's virtual assistant. I'm here to help you learn more about his portfolio!",
         "I'm an AI assistant built to answer your questions about John-Ronan."
       ]
     },
-    // --- CREATOR (JOHN-RONAN) IDENTITY ---
     {
       "tag": "creator_identity",
       "patterns": [
@@ -26,15 +26,33 @@
         "Who created you",
         "Tell me about your creator",
         "Who built you",
-        "Who is he",
-        "Tell me more about him"
+        "Tell me more about him",
+        "who made you",
+        "who is the developer"
+        // REMOVED 'who is yours' to prevent stealing from bot_identity
+        // REMOVED 'Who is he' to prevent margin/ambiguity errors
       ],
       "responses": [
-        "John-Ronan Beira is a developer and student. He is currently taking {Program} and is in his {Year Level}.",
-        "John-Ronan is the talented developer who built me. He's currently a {Year Level} student in {Program}."
+        "John-Ronan Beira is a developer and student at MSU-IIT. He built me to showcase his projects.",
+        "John-Ronan is the developer behind this project. He's currently a Computer Science student."
       ]
     },
-    // --- DATA FETCHING (ABOUT CREATOR) ---
+    {
+      "tag": "greeting",
+      "patterns": [
+        "Hi",
+        "Hello",
+        "Hey there",
+        "Hey",
+        "Good morning",
+        "Good afternoon",
+        "good day",           // Matches translation of 'magandang araw'
+        "greetings"
+      ],
+      "responses": [
+        "Hello! I'm John-Ronan's virtual assistant. How can I help you today?"
+      ]
+    },
     {
       "tag": "get_program",
       "patterns": [
@@ -47,7 +65,7 @@
         "What are you studying"
       ],
       "responses": [
-        "John-Ronan is currently enrolled in {Program}."
+        "John-Ronan is currently enrolled in Bachelor of Science in Computer Science."
       ]
     },
     {
@@ -60,21 +78,7 @@
         "What year are you in"
       ],
       "responses": [
-        "He is currently in his {Year Level}."
-      ]
-    },
-    {
-      "tag": "greeting",
-      "patterns": [
-        "Hi",
-        "Hello",
-        "Hey there",
-        "Hey",
-        "Good morning",
-        "Good afternoon"
-      ],
-      "responses": [
-        "Hello! I'm John-Ronan's virtual assistant. How can I help you today?"
+        "He is currently in his 3rd year at MSU-IIT."
       ]
     },
     {
@@ -98,8 +102,7 @@
         "What is your current task"
       ],
       "responses": [
-        "I'm currently here to answer any questions you have about John-Ronan's portfolio!",
-        "Just hanging out, ready to help you learn more about John-Ronan."
+        "I'm currently here to answer any questions you have about John-Ronan's portfolio!"
       ]
     },
     {
