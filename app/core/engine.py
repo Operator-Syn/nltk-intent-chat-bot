@@ -1,8 +1,10 @@
 # core/engine.py
 import re
 import logging
+import os
 import numpy as np
 import langid
+from huggingface_hub import login
 from transformers import MarianMTModel, MarianTokenizer
 from spellchecker import SpellChecker
 from nltk.stem import WordNetLemmatizer
@@ -13,6 +15,11 @@ logging.getLogger("transformers").setLevel(logging.ERROR)
 
 class ChatEngine:
     def __init__(self, intents_data, slang_data=None):
+        # Authenticate with Hugging Face if token is available
+        hf_token = os.getenv("HF_TOKEN")
+        if hf_token:
+            login(token=hf_token)
+
         self.lemmatizer = WordNetLemmatizer()
         self.spell = SpellChecker()
         self.slang_map = slang_data or {}
