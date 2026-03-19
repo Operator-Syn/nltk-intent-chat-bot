@@ -1,6 +1,9 @@
 {
     "tests": [
         { "input": "hello", "expected_intent": "greeting", "expected_lang": "en" },
+        { "input": "greetings", "expected_intent": "greeting", "expected_lang": "en" },
+        { "input": "greeting", "expected_intent": "greeting", "expected_lang": "en" },
+        { "input": "yohooo", "expected_intent": "greeting", "expected_lang": "en" },
         { "input": "magandang araw", "expected_intent": "greeting", "expected_lang": "tl" },
         { "input": "sino ka?", "expected_intent": "bot_identity", "expected_lang": "tl" },
         { "input": "who you", "expected_intent": "bot_identity", "expected_lang": "en" },
