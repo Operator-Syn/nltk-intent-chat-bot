@@ -1,4 +1,4 @@
-// guards.jsonc
+// en_overrides.jsonc
 
 {
   "en_overrides": [
@@ -9,6 +9,7 @@
     "hey",
     "what is this",
     "who is this",
-    "yo"
+    "yo",
+    "yohoo"
   ]
 }

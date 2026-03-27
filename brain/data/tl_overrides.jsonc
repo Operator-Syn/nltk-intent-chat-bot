@@ -1,0 +1,25 @@
+// markers.jsonc -> tl_overrides.jsonc
+{
+    "tl_overrides": [
+        "sino",
+        "ano",
+        "ka",
+        "mo",
+        "ko",
+        "ng",
+        "mga",
+        "ikaw",
+        "araw",
+        "nasaan",
+        "kwento",
+        "naman",
+        "opo",
+        "bakit",
+        "paano",
+        "kailan",
+        "tayo",
+        "kami",
+        "sila",
+        "ito"
+    ]
+}
