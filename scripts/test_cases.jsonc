@@ -4,10 +4,14 @@
         { "input": "greetings", "expected_intent": "greeting", "expected_lang": "en" },
         { "input": "greeting", "expected_intent": "greeting", "expected_lang": "en" },
         { "input": "yohooo", "expected_intent": "greeting", "expected_lang": "en" },
+        { "input": "what are you doing?", "expected_intent": "bot_activity", "expected_lang": "en" },
         { "input": "magandang araw", "expected_intent": "greeting", "expected_lang": "tl" },
         { "input": "sino ka?", "expected_intent": "bot_identity", "expected_lang": "tl" },
         { "input": "who you", "expected_intent": "bot_identity", "expected_lang": "en" },
+        { "input": "whhhoooo arrreee youuuu", "expected_intent": "bot_identity", "expected_lang": "en" },
         { "input": "ano ang iyong pangalan?", "expected_intent": "bot_identity", "expected_lang": "tl" },
-        { "input": "kwento ka naman", "expected_intent": "unknown", "expected_lang": "tl" }
+        { "input": "kwento ka naman", "expected_intent": "unknown", "expected_lang": "tl" },
+        { "input": "fooooood", "expected_intent": "unknown", "expected_lang": "en" },
+        { "input": "letter", "expected_intent": "unknown", "expected_lang": "en" }
     ]
 }

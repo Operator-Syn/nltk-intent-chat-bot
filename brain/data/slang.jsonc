@@ -1,3 +1,4 @@
+// slang.jsonc
 {
   "slang": {
     "r": "are",
@@ -9,6 +10,7 @@
     "wat": "what",
     "whois": "who is",
     "yo": "hey",
-    "sup": "hello"
+    "sup": "hello",
+    "yohoo": "hello"
   }
 }
