@@ -4,49 +4,71 @@ import logging
 import os
 import numpy as np
 import langid
+from concurrent.futures import ThreadPoolExecutor
 from huggingface_hub import login
 from transformers import MarianMTModel, MarianTokenizer
+from sentence_transformers import SentenceTransformer, util
 from spellchecker import SpellChecker
 from nltk.stem import WordNetLemmatizer
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 
 logging.getLogger("transformers").setLevel(logging.ERROR)
 
+
 class ChatEngine:
-    def __init__(self, intents_data, slang_data=None, markers_data=None, guards_data=None):
+    def __init__(
+        self,
+        intents_data,
+        slang_data=None,
+        tl_overrides_data=None,
+        en_overrides_data=None,
+    ):
         # Authenticate with Hugging Face if token is available
         hf_token = os.getenv("HF_TOKEN")
         if hf_token:
-            login(token=hf_token)
+            try:
+                login(token=hf_token)
+            except Exception as e:
+                logging.warning(f"Hugging Face login failed: {e}")
 
         self.lemmatizer = WordNetLemmatizer()
         self.spell = SpellChecker()
         self.slang_map = slang_data or {}
-        # Load protected Tagalog markers from markers.jsonc
-        self.tl_markers = set(markers_data.get("tl_markers", [])) if markers_data else set()
-        
-        # Load English overrides from guards.jsonc
-        self.en_overrides = set(guards_data.get("en_overrides", [])) if guards_data else set()
 
-        self.user_lang = "en"
-        self.last_conf = 0.0
+        # Load Tagalog overrides
+        self.tl_overrides = (
+            set(tl_overrides_data.get("tl_overrides", []))
+            if tl_overrides_data
+            else set()
+        )
+
+        # Load English overrides
+        self.en_overrides = (
+            set(en_overrides_data.get("en_overrides", []))
+            if en_overrides_data
+            else set()
+        )
+
+        # --- PRE-CALCULATE SKELETONS (Fuzzy Matching) ---
+        # We pre-calculate these once to avoid doing it on every message
+        self.en_skeletons = {re.sub(r"(.)\1+", r"\1", o): o for o in self.en_overrides}
+        self.tl_skeletons = {re.sub(r"(.)\1+", r"\1", o): o for o in self.tl_overrides}
 
         # Force detection to only consider English and Tagalog
-        langid.set_languages(['en', 'tl'])
+        langid.set_languages(["en", "tl"])
 
-        # Pre-load MarianMT translation models at startup
+        # --- REFINED PARALLEL STARTUP ---
         self._translators = {}
-        for pair in [("tl", "en"), ("en", "tl")]:
-            model_name = f"Helsinki-NLP/opus-mt-{pair[0]}-{pair[1]}"
-            self._translators[pair] = {
-                "tokenizer": MarianTokenizer.from_pretrained(model_name),
-                "model": MarianMTModel.from_pretrained(model_name),
-            }
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future_semantic = executor.submit(SentenceTransformer, "all-MiniLM-L6-v2")
 
-        # Dual-layer vectorizers
-        self.char_vectorizer = TfidfVectorizer(analyzer='char_wb', ngram_range=(2, 5))
-        self.word_vectorizer = TfidfVectorizer(analyzer='word', ngram_range=(1, 2))
+            for pair in [("tl", "en"), ("en", "tl")]:
+                model_name = f"Helsinki-NLP/opus-mt-{pair[0]}-{pair[1]}"
+                self._translators[pair] = {
+                    "tokenizer": MarianTokenizer.from_pretrained(model_name),
+                    "model": MarianMTModel.from_pretrained(model_name),
+                }
+
+            self.semantic_model = future_semantic.result()
 
         self.intents = intents_data
         self.all_patterns = []
@@ -54,16 +76,18 @@ class ChatEngine:
 
         for intent in intents_data:
             for pattern in intent["patterns"]:
-                # We do NOT autocorrect the KB patterns to keep them as canonical ground truth
-                processed = self._preprocess(pattern, autocorrect=False, translate=False)
+                processed, _, _ = self._preprocess(
+                    pattern, autocorrect=False, translate=False
+                )
                 self.all_patterns.append(processed)
                 self.pattern_tags.append(intent["tag"])
 
-        self.char_matrix = self.char_vectorizer.fit_transform(self.all_patterns)
-        self.word_matrix = self.word_vectorizer.fit_transform(self.all_patterns)
+        self.pattern_embeddings = self.semantic_model.encode(
+            self.all_patterns, convert_to_tensor=True
+        )
 
     def _get_translation(self, text, from_code, to_code):
-        """Translates text using MarianMT — fully offline, no stanza dependency."""
+        """Translates text using MarianMT — fully offline."""
         pair = (from_code, to_code)
         if pair not in self._translators:
             return None
@@ -74,29 +98,48 @@ class ChatEngine:
         return tokenizer.decode(translated[0], skip_special_tokens=True)
 
     def _preprocess(self, text, autocorrect=True, translate=True):
-        # --- LAYER 0: NOISE CLEANING ---
-        text = re.sub(r'\x1b\[[0-9;]*[a-zA-Z~]', '', text)
-        text = re.sub(r'\^\[+\[[A-Z0-9~]*', '', text)
-        text = text.lower().strip()
-        text = re.sub(r"[^a-z0-9\s]", "", text)
+        """Returns tuple of (processed_text, detected_lang, confidence)."""
+        current_lang = "en"
+        lang_conf = 0.0
 
-        # --- LAYER 0.5: ENGLISH GUARD OVERRIDE ---
-        # If the phrase is in our guards list, we force English and skip translation logic
-        if translate and text in self.en_overrides:
-            self.user_lang = "en"
-            translate = False
+        # --- LAYER 0: NOISE CLEANING ---
+        text = re.sub(r"\x1b\[[0-9;]*[a-zA-Z~]", "", text)
+        text = re.sub(r"\^\[+\[[A-Z0-9~]*", "", text)
+        text = text.lower().strip()
+
+        raw_clean = re.sub(r"[^a-z0-9\s]", "", text).strip()
+        text = raw_clean
+
+        # --- LAYER 0.2: NORMALIZATION ---
+        text = re.sub(r"(.)\1{2,}", r"\1\1", text)
+
+        # --- LAYER 0.5: FUZZY HARD OVERRIDES (Canonical Replacement) ---
+        if translate:
+            skeleton = re.sub(r"(.)\1+", r"\1", text)
+
+            if skeleton in self.en_skeletons:
+                text = self.en_skeletons[skeleton]
+                current_lang = "en"
+                translate = False
+            elif text in self.en_overrides:
+                current_lang = "en"
+                translate = False
+            elif skeleton in self.tl_skeletons:
+                text = self.tl_skeletons[skeleton]
+                current_lang = "tl"
+            elif text in self.tl_overrides:
+                current_lang = "tl"
 
         # --- LAYER 1: OFFLINE DETECTION & TRANSLATION ---
-        is_native_english = True
+        is_native_english = current_lang == "en"
+
         if translate:
             lang, conf = langid.classify(text)
-            
-            # Check if any word in the input is a protected Tagalog marker
-            has_tl_markers = any(w in self.tl_markers for w in text.split())
+            lang_conf = conf
+            has_tl_override = any(w in self.tl_overrides for w in text.split())
 
-            # Trigger translation if detected as TL, has markers, or is low-confidence English
-            if lang == 'tl' or has_tl_markers or (lang == 'en' and conf < 2.0):
-                self.user_lang = "tl"
+            if lang == "tl" or has_tl_override or (lang == "en" and abs(conf) < 2.0):
+                current_lang = "tl"
                 is_native_english = False
                 try:
                     translated = self._get_translation(text, "tl", "en")
@@ -105,34 +148,36 @@ class ChatEngine:
                 except Exception as e:
                     print(f"[Translation Error] {e}")
             else:
-                self.user_lang = "en"
-            
-            self.last_conf = conf
+                current_lang = "en"
+                is_native_english = True
 
-        # --- LAYER 2: NORMALIZATION ---
-        text = re.sub(r'(.)\1{2,}', r'\1\1', text)
+        # --- LAYER 2: TOKENIZATION ---
         words = text.split()
 
-        # --- LAYER 3: SLANG MAPPING (Priority) ---
+        # --- LAYER 3: SLANG MAPPING ---
         current_words = [self.slang_map.get(w, w) for w in words]
 
-        # --- LAYER 4: AUTO-CORRECT (Conditional Fallback) ---
-        # Only spellcheck if native English and the word isn't a protected marker
+        # --- LAYER 4: AUTO-CORRECT (Conditional) ---
         if autocorrect and is_native_english:
             final_words = []
             for w in current_words:
-                if len(w) <= 3 or w in self.tl_markers:
+                # Skip short words or Tagalog overrides to prevent false corrections
+                if len(w) <= 3 or w in self.tl_overrides:
                     final_words.append(w)
                 else:
                     final_words.append(self.spell.correction(w) or w)
             current_words = final_words
 
         # --- LAYER 5: LEMMATIZATION ---
-        return " ".join([self.lemmatizer.lemmatize(w) for w in current_words]).strip()
+        processed_text = " ".join(
+            [self.lemmatizer.lemmatize(w) for w in current_words]
+        ).strip()
 
-    def translate_response(self, response_text):
-        """Translates the English response back to the user's detected language."""
-        if self.user_lang == "en":
+        return processed_text, current_lang, lang_conf
+
+    def translate_response(self, response_text, user_lang):
+        """Translates the English response back based on the provided user_lang."""
+        if user_lang == "en":
             return response_text
         try:
             return self._get_translation(response_text, "en", "tl") or response_text
@@ -141,30 +186,22 @@ class ChatEngine:
             return response_text
 
     def predict_intent(self, user_text):
-        processed = self._preprocess(user_text)
+        """Returns (processed, intent, confidence, runner_up, detected_lang, lang_conf)."""
+        processed, detected_lang, lang_conf = self._preprocess(user_text)
 
-        print(f"[Debug] Detected Language: {self.user_lang} ({self.last_conf:.2f})")
-        print(f"[Debug] Processed: {processed}")
+        # --- SEMANTIC VECTOR ANALYSIS ---
+        user_embedding = self.semantic_model.encode(processed, convert_to_tensor=True)
+        cosine_scores = util.cos_sim(user_embedding, self.pattern_embeddings)[0]
+        combined_sims = cosine_scores.cpu().numpy()
 
-        # --- VECTOR ANALYSIS ---
-        char_input = self.char_vectorizer.transform([processed])
-        word_input = self.word_vectorizer.transform([processed])
-
-        char_sims = cosine_similarity(char_input, self.char_matrix).flatten()
-        word_sims = cosine_similarity(word_input, self.word_matrix).flatten()
-
-        # ENSEMBLE: 70% weight on exact word logic, 30% on character similarity
-        combined_sims = (word_sims * 0.7) + (char_sims * 0.3)
-
-        if combined_sims.size == 0 or np.max(combined_sims) < 0.01:
-            return processed, "unknown", 0.0, ("none", 0.0)
+        if combined_sims.size == 0 or np.max(combined_sims) < 0.2:
+            return processed, "unknown", 0.0, ("none", 0.0), detected_lang, lang_conf
 
         top_indices = combined_sims.argsort()[::-1]
         idx1 = top_indices[0]
         score1 = combined_sims[idx1]
         intent1 = self.pattern_tags[idx1]
 
-        # Track runner-up to calculate margin (ambiguity check)
         if len(top_indices) > 1:
             idx2 = top_indices[1]
             score2 = combined_sims[idx2]
@@ -172,4 +209,11 @@ class ChatEngine:
         else:
             score2, intent2 = 0.0, "none"
 
-        return processed, intent1, score1, (intent2, score2)
+        return (
+            processed,
+            intent1,
+            float(score1),
+            (intent2, float(score2)),
+            detected_lang,
+            lang_conf,
+        )
