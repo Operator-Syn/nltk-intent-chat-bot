@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "ec61a01ce0e48efc15e7568bbac1f34962d6c91a0d849ef448b428ecda207d35"
+            "sha256": "0e186e9f8072114e7b6d0a36449eb56b04c2180519515986499728bf5e583d0e"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -1710,6 +1710,15 @@
             ],
             "markers": "python_version >= '3.11'",
             "version": "==1.17.1"
+        },
+        "sentence-transformers": {
+            "hashes": [
+                "sha256:414a0a881f53a4df0e6cbace75f823bfcb6b94d674c42a384b498959b7c065e2",
+                "sha256:dca6b98db790274a68185d27a65801b58b4caf653a4e556b5f62827509347c7d"
+            ],
+            "index": "pypi",
+            "markers": "python_version >= '3.10'",
+            "version": "==5.3.0"
         },
         "sentencepiece": {
             "hashes": [

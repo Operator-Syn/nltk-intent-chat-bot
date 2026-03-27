@@ -18,6 +18,7 @@ argostranslate = "*"
 langid = "*"
 transformers = "*"
 sentencepiece = "*"
+sentence-transformers = "*"
 
 [dev-packages]
 
